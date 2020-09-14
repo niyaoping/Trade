@@ -182,7 +182,73 @@ public class TradeServcieImpl implements ITradeServcie {
 
  }
 
+    /**
+     * 1、如果增加的数量正好能均分，那么子表每条均衡增加
+     * 2、如果不能均匀分摊，则第一条记录增加的数量是增加数%原来记录数-1，
+     *    除开第一条其他增加记录就是增加数/原来记录数-1，举个例子，原先字表记录是三条，
+     *    现在新增的数量是19，那么 第一条记录新增的数是19%(3-1)=1,除开第一条，其他2条记录新增的数量是19/(3-1)=9
+     *    所以第一条增加1，第一第二条记录增加9，总数就是19
+     * @param lst
+     * @param changeQuantity
+     */
+ private void add(List<Transportation> lst ,Integer changeQuantity){
+     for(Transportation t :lst){
+         t.setQuantity(t.getQuantity()+(changeQuantity%lst.size()==0?changeQuantity/lst.size():(t==lst.get(0)?changeQuantity%(lst.size()-1):changeQuantity/(lst.size()-1))));
+         transportationMapper.update(t);
+     }
+ }
 
+
+    /**
+     * 1、如果减少的数量正好能均分，那么子表每条均衡增加
+     * 2、如果不能均匀分摊，则第一条记录增加的数量是增加数%原来记录数-1，
+     *    除开第一条其他增加记录就是增加数/原来记录数-1，举个例子，原先字表记录是三条，
+     *    现在新增的数量是19，那么 第一条记录新增的数是19%(3-1)=1,除开第一条，其他2条记录新增的数量是19/(3-1)=9
+     *    所以第一条增加1，第一第二条记录增加9，总数就是19
+     * @param lst
+     * @param changeQuantity
+     */
+private void subtract(List<Transportation> lst ,Integer changeQuantity,Integer oldQuantity){
+    if(oldQuantity<changeQuantity){
+        throw new APIException(200, String.valueOf(changeQuantity)+"这个数太大了，以至于比老数量还大，导致的后果就是减完变负数啦");
+    }
+    for(Transportation t :lst){
+        t.setQuantity(t.getQuantity()-(changeQuantity%lst.size()==0?changeQuantity/lst.size():(t==lst.get(0)?changeQuantity%(lst.size()-1):changeQuantity/(lst.size()-1))));
+        transportationMapper.update(t);
+    }
+}
+
+    /**
+     * 附表每条记录原来数量*倍数
+     * @param lst
+     * @param changeQuantity
+     */
+    private void multiply(List<Transportation> lst ,Integer changeQuantity){
+        for(Transportation t :lst){
+            t.setQuantity(t.getQuantity()*changeQuantity);
+            transportationMapper.update(t);
+        }
+   }
+
+    /**
+     * 进行整除
+     * @param lst
+     * @param changeQuantity
+     */
+   private void divide(List<Transportation> lst ,Integer changeQuantity,Integer oldQuantity){
+       if(oldQuantity%changeQuantity!=0){//校验主表中的数量能够被整除
+           throw new APIException(200,String.valueOf(oldQuantity)+"不能被"+String.valueOf(changeQuantity)+"整除");
+       }
+       for(Transportation t :lst) {//校验所有子表中的数量能否被整除
+           if(t.getQuantity()%changeQuantity!=0){
+               throw new APIException(200,String.valueOf(t.getQuantity())+"不能被"+String.valueOf(changeQuantity)+"整除");
+           }
+       }
+       for(Transportation t :lst) {
+           t.setQuantity(t.getQuantity()/changeQuantity);
+           transportationMapper.update(t);
+       }
+   }
  /**
   * 按照加减乘除更新数量
   *
@@ -191,83 +257,45 @@ public class TradeServcieImpl implements ITradeServcie {
   * @return void
   */
  public void updateQuantity(Integer id, Integer changeQuantity,OperationEnum operationEnum){
-
      Trade trade=new Trade(id);
      trade.setDelFlag(0);
-     List<Trade> lstTrade= tradeMapper.select(trade);
+     List<Trade> lstTrade= tradeMapper.select(trade);//根据id及软删除标志查询trade记录
      if(!CollectionUtils.isNotEmpty(lstTrade)){// 如果要更新的记录不存在，则报错
          throw new APIException(200,"no record");
      }
+
      Transportation transportation= new Transportation();
      transportation.setDelFlag(0);
      transportation.setTradeId(id);
-     List<Transportation> lst=transportationMapper.select(transportation);
+     List<Transportation> lst=transportationMapper.select(transportation);//根据主表trade 的id查询附表记录
      if(!CollectionUtils.isNotEmpty(lst)){// 如果要更新的记录不存在，则报错
          throw new APIException(200,"no record");
      }
-     Integer quantity=lstTrade.get(0).getTotalQuantity();
-     //数量变化，价格和重量也要改变，这边的计算暂时不实现了，这里只关注数量的变化
-   if(operationEnum==OperationEnum.multiply){//乘就是各个子记录*
-       trade.setTotalQuantity(quantity*changeQuantity);
-       tradeService.update(trade);
-       for(Transportation t :lst){
-           t.setQuantity(t.getQuantity()*changeQuantity);
-           transportationMapper.update(t);
-       }
-   }else if(operationEnum==OperationEnum.add){
-       trade.setTotalQuantity(quantity+changeQuantity);
-       tradeService.update(trade);
-       int partial=0;
-       for(Transportation t :lst){
-           if(changeQuantity%lst.size()==0){
-               partial=changeQuantity/lst.size();
-           }
-           else{
-               partial=changeQuantity/(lst.size()-1);
-               if(t==lst.get(0)){
-                   partial=changeQuantity%(lst.size()-1);
-               }
-           }
-           t.setQuantity(t.getQuantity()+partial);
-           transportationMapper.update(t);
-       }
+
+     /**
+      * 以下逻辑进行加减乘除四种逻辑数量的运算
+      */
+     Integer oldQuantity=lstTrade.get(0).getTotalQuantity();//获取父表中原先的数量
+     //数量变化，理论上价格和重量也要改变，这边的计算暂时不实现了，demo这里只关注数量的变化
+     Integer newQuantity=0;
+      if(operationEnum==OperationEnum.multiply){//数量按倍数增加
+           newQuantity=oldQuantity*changeQuantity;//主表原来数量*changeQuantity
+           multiply(lst,changeQuantity);
+
+      }else if(operationEnum==OperationEnum.add){//数量增加
+           newQuantity=oldQuantity+changeQuantity;//主表数量增加changeQuantity
+           add(lst,changeQuantity);
       }
-       else if(operationEnum==OperationEnum.subtract){
-       trade.setTotalQuantity(quantity-changeQuantity);
-       tradeService.update(trade);
-       int partial=0;
-           for(Transportation t :lst){
-               if(changeQuantity%lst.size()==0){
-                   partial=changeQuantity/lst.size();
-               }
-               else{
-                   partial=changeQuantity/(lst.size()-1);
-                   if(t==lst.get(0)){
-                       partial=changeQuantity%(lst.size()-1);
-                   }
-               }
-               t.setQuantity(t.getQuantity()-partial);
-               transportationMapper.update(t);
-           }
+       else if(operationEnum==OperationEnum.subtract){//数量减少
+           newQuantity=oldQuantity-changeQuantity;//主表中的数量减少changeQuantity
+           subtract(lst,changeQuantity,oldQuantity);
        }
-   else if(operationEnum==OperationEnum.divide) {
-       if(quantity%changeQuantity!=0){
-           throw new APIException(200,String.valueOf(quantity)+"不能被"+String.valueOf(changeQuantity)+"整除");
+       else if(operationEnum==OperationEnum.divide) {//数量整除changeQuantity
+           newQuantity=oldQuantity/changeQuantity;
+           divide(lst,changeQuantity,oldQuantity);
        }
-       for(Transportation t :lst) {//校验能否被整除
-           if(t.getQuantity()%changeQuantity!=0){
-               throw new APIException(200,String.valueOf(t.getQuantity())+"不能被"+String.valueOf(changeQuantity)+"整除");
-           }
-       }
-       trade.setTotalQuantity(quantity/changeQuantity);
-       tradeService.update(trade);
-       for(Transportation t :lst) {
-           t.setQuantity(t.getQuantity()/changeQuantity);
-           transportationMapper.update(t);
-       }
-
-   }
-
+       trade.setTotalQuantity(newQuantity);
+       tradeService.update(trade);//更新主表数量
    }
 
 
